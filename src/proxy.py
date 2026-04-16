@@ -65,6 +65,9 @@ def _base_headers(request: Request) -> Dict[str, str]:
         "upgrade",
         "host",
         "content-length",
+        # Always replace any inbound Authorization with our minted ID token.
+        # (Avoid duplicates due to header casing differences.)
+        "authorization",
     }
 
     return {k: v for k, v in incoming.items() if k.lower() not in hop_by_hop}
