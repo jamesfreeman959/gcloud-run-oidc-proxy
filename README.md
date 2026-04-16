@@ -53,7 +53,7 @@ curl http://localhost:8080/healthz
 
 ## LiteLLM configuration
 Configure LiteLLM (or any OpenAI-compatible client) to point at the proxy:
-- **API Base**: `http://token-proxy:8080` (inside compose) or `http://localhost:8080` (from host)
+- **API Base**: `http://token-proxy:8080/v1` (inside compose) or `http://localhost:8080/v1` (from host)
 - **API Key**: any dummy value (auth happens at the proxy)
 
 ## Test with curl (before integrating anything)
