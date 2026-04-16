@@ -173,44 +173,79 @@ async def proxy(request: Request, path: str):
     headers = _base_headers(request)
     headers["Authorization"] = f"Bearer {token}"
 
-    upstream_url = f"{_CLOUD_RUN_URL}/{path}" if path else _CLOUD_RUN_URL
+    # Some clients misconfigure base URLs and call `/chat/completions` instead of `/v1/chat/completions`.
+    # Be forgiving and rewrite common OpenAI-compatible endpoints to include `/v1`.
+    normalized_path = path.lstrip("/")
+    if not normalized_path.startswith("v1/"):
+        if normalized_path in {
+            "chat/completions",
+            "completions",
+            "embeddings",
+            "models",
+            "images/generations",
+            "audio/transcriptions",
+            "audio/speech",
+        }:
+            normalized_path = f"v1/{normalized_path}"
+
+    upstream_url = (
+        f"{_CLOUD_RUN_URL}/{normalized_path}" if normalized_path else _CLOUD_RUN_URL
+    )
 
     timeout = httpx.Timeout(_HTTP_TIMEOUT_S)
 
-    # Use a streaming request so we can relay SSE without buffering.
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        async with client.stream(
-            method=request.method,
-            url=upstream_url,
-            params=request.query_params,
-            headers=headers,
-            content=body if body else None,
-        ) as upstream:
-            status_code = upstream.status_code
-            resp_headers = _response_headers(upstream.headers)
-            media_type = upstream.headers.get("content-type")
+    # Important: do NOT open the upstream stream in an `async with` that ends before Starlette
+    # finishes iterating the body iterator, otherwise httpx raises StreamClosed.
+    client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+    try:
+        upstream = await client.send(
+            httpx.Request(
+                method=request.method,
+                url=upstream_url,
+                params=request.query_params,
+                headers=headers,
+                content=body if body else None,
+            ),
+            stream=True,
+        )
+    except Exception:
+        await client.aclose()
+        raise
 
-            should_stream = stream_request or (
-                media_type is not None and "text/event-stream" in media_type.lower()
-            )
+    status_code = upstream.status_code
+    resp_headers = _response_headers(upstream.headers)
+    media_type = upstream.headers.get("content-type")
 
-            if should_stream:
-                async def _aiter_bytes() -> Iterable[bytes]:
-                    async for chunk in upstream.aiter_bytes():
-                        if chunk:
-                            yield chunk
+    should_stream = stream_request or (
+        media_type is not None and "text/event-stream" in media_type.lower()
+    )
 
-                return StreamingResponse(
-                    _aiter_bytes(),
-                    status_code=status_code,
-                    headers=resp_headers,
-                    media_type=media_type,
-                )
+    if should_stream:
 
-            content = await upstream.aread()
-            return Response(
-                content=content,
-                status_code=status_code,
-                headers=resp_headers,
-                media_type=media_type,
-            )
+        async def _aiter_bytes() -> Iterable[bytes]:
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    if chunk:
+                        yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            _aiter_bytes(),
+            status_code=status_code,
+            headers=resp_headers,
+            media_type=media_type,
+        )
+
+    try:
+        content = await upstream.aread()
+        return Response(
+            content=content,
+            status_code=status_code,
+            headers=resp_headers,
+            media_type=media_type,
+        )
+    finally:
+        await upstream.aclose()
+        await client.aclose()
