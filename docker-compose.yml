@@ -1,0 +1,28 @@
+services:
+  token-proxy:
+    build: .
+    image: gcloud-run-oidc-proxy:local
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      # The proxy reads the service account JSON from this path inside the container.
+      - GOOGLE_APPLICATION_CREDENTIALS=/etc/proxy/service-account.json
+    volumes:
+      # Mount your real SA key file at runtime. Do NOT commit it.
+      # Example:
+      #   SERVICE_ACCOUNT_JSON_PATH=./secrets/service-account.json
+      - ${SERVICE_ACCOUNT_JSON_PATH:-./secrets/service-account.json}:/etc/proxy/service-account.json:ro
+
+  # Example LiteLLM wiring (commented out on purpose)
+  #
+  # litellm:
+  #   image: ghcr.io/berriai/litellm:main-latest
+  #   depends_on:
+  #     - token-proxy
+  #   environment:
+  #     # Point LiteLLM's OpenAI-compatible base URL at the proxy.
+  #     - OPENAI_API_BASE=http://token-proxy:8080
+  #     # Any dummy value; Cloud Run auth is handled by token-proxy.
+  #     - OPENAI_API_KEY=dummy

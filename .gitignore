@@ -1,0 +1,21 @@
+.DS_Store
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.venv/
+venv/
+
+.env
+.env.*
+!.env.example
+
+# Never commit real service account keys
+*.json
+!service-account.example.json
+
+# Optional local secrets folder
+secrets/
